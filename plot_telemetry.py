@@ -86,9 +86,13 @@ def main():
     x_axis = df['MSG CNT'] if 'MSG CNT' in df.columns else df.index
     x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
     
+    # Auto-downsample massive datasets so Matplotlib renders instantly 
+    # (Since monitors only have ~2k pixels anyway, plotting 500k points is just wasted rendering time)
+    step = max(1, len(df) // 10000)  # Caps resolution roughly at 10,000 points
+    
     for i, col in enumerate(cols_to_plot):
         ax = axes[i]
-        ax.plot(x_axis, df[col], label=col, alpha=0.8, color=f'C{i}')
+        ax.plot(x_axis[::step], df[col][::step], label=col, alpha=0.8, color=f'C{i}')
         
         if i == 0:
             ax.set_title(f"Message {msg_id} Telemetry")

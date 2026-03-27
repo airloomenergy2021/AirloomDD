@@ -143,12 +143,15 @@ def main():
     x_axis = df['MSG CNT'] if 'MSG CNT' in df.columns else df.index
     x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
     
-    with st.spinner("Rendering plots..."):
+    # Auto-downsample massive datasets so Matplotlib renders instantly 
+    step = max(1, len(df) // 10000)
+    
+    with st.spinner("Rendering plots (Optimized)..."):
         for i, col in enumerate(cols_to_plot):
             ax = axes[i]
             
             # Draw the line
-            ax.plot(x_axis, df[col], label=col, alpha=0.8, color=f'C{i}', linewidth=1.5)
+            ax.plot(x_axis[::step], df[col][::step], label=col, alpha=0.8, color=f'C{i}', linewidth=1.5)
             
             # Format aesthetics
             ax.set_ylabel(col, fontsize=10, fontweight='bold')
