@@ -10,19 +10,74 @@ def main():
     st.sidebar.header("1. Data Selection")
     
     # Option 1: Direct File Upload (Best for Streamlit Cloud & Google Drive)
-    uploaded_file = st.sidebar.file_uploader("📥 Upload CSV directly from Google Drive", type=['csv'])
+    uploaded_file = st.sidebar.file_uploader("📥 Upload Raw .pcap or parsed .csv", type=['csv', 'pcap'])
     
     df = None
     msg_id = "Custom"
     
+    @st.cache_data
+    def decode_pcap_to_dataframes(file_buffer):
+        import os, struct, dpkt
+        from pcap_decoder import load_icd_config_from_md, build_format
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        icd_md_dir = os.path.join(current_dir, "ICD_Formats")
+        icd_config = load_icd_config_from_md(icd_md_dir)
+        
+        if not icd_config:
+            raise ValueError("Local ICD missing")
+            
+        formats = {}
+        for sheet, fields in icd_config.items():
+            try:
+                m_id = int(sheet.replace('B', ''))
+                fmt, names = build_format(fields)
+                formats[m_id] = {'fmt': fmt, 'names': names, 'size': struct.calcsize(fmt)}
+            except Exception: pass
+            
+        records = {m_id: [] for m_id in formats.keys()}
+        pcap = dpkt.pcap.Reader(file_buffer)
+        
+        for ts, buf in pcap:
+            if len(buf) < 2: continue
+            try: m_id = struct.unpack("<H", buf[:2])[0]
+            except: continue
+            
+            if m_id in formats:
+                fmt_info = formats[m_id]
+                padded = buf + b'\x00' * max(0, fmt_info['size'] - len(buf))
+                try:
+                    data_tuple = struct.unpack(fmt_info['fmt'], padded[:fmt_info['size']])
+                    data_tuple = [(x.decode('utf-8','ignore').strip('\x00') if isinstance(x,bytes) else x) for x in data_tuple]
+                    records[m_id].append(data_tuple)
+                except: pass
+                
+        dfs = {}
+        for m_id, data in records.items():
+            if data: dfs[str(m_id)] = pd.DataFrame(data, columns=formats[m_id]['names'])
+        return dfs
+
     if uploaded_file is not None:
-        try:
-            with st.spinner(f"Processing uploaded matrix: {uploaded_file.name}..."):
-                df = pd.read_csv(uploaded_file)
-            msg_id = uploaded_file.name.split('_msg_')[-1].replace('.csv', '') if '_msg_' in uploaded_file.name else "Uploaded CSV"
-        except Exception as e:
-            st.error(f"Failed to read file: {e}")
-            return
+        if uploaded_file.name.endswith('.pcap'):
+            try:
+                with st.spinner(f"Decoding High-Frequency PCAP: {uploaded_file.name}..."):
+                    all_dfs = decode_pcap_to_dataframes(uploaded_file)
+                if not all_dfs:
+                    st.error("No valid messages successfully unpacked from PCAP.")
+                    return
+                msg_id = st.sidebar.selectbox("Select Extracted Message ID", list(all_dfs.keys()))
+                df = all_dfs[msg_id]
+            except Exception as e:
+                st.error(f"Failed to process PCAP file: {e}")
+                return
+        else:
+            try:
+                with st.spinner(f"Processing uploaded matrix: {uploaded_file.name}..."):
+                    df = pd.read_csv(uploaded_file)
+                msg_id = uploaded_file.name.split('_msg_')[-1].replace('.csv', '') if '_msg_' in uploaded_file.name else "Uploaded CSV"
+            except Exception as e:
+                st.error(f"Failed to read file: {e}")
+                return
     else:
         # Option 2: Fallback to Local Directory Search if running locally
         st.sidebar.markdown("---")
@@ -55,7 +110,6 @@ def main():
         
         target_file = os.path.join(folder_path, msg_dict[msg_id])
         
-        # Use st.cache_data so we don't physically reload the giant CSV every time the user checks a box!
         @st.cache_data
         def load_data(filepath):
             return pd.read_csv(filepath)
