@@ -9,48 +9,63 @@ def main():
     
     st.sidebar.header("1. Data Selection")
     
-    # 1. Find CSV folders in the current directory
-    current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-    csv_folders = [d for d in os.listdir(current_dir) if os.path.isdir(os.path.join(current_dir, d)) and d.endswith('_csv')]
-    csv_folders.sort()
+    # Option 1: Direct File Upload (Best for Streamlit Cloud & Google Drive)
+    uploaded_file = st.sidebar.file_uploader("📥 Upload CSV directly from Google Drive", type=['csv'])
     
-    if not csv_folders:
-        st.error("No *_csv directories found. Please run the decoder first.")
-        return
+    df = None
+    msg_id = "Custom"
+    
+    if uploaded_file is not None:
+        try:
+            with st.spinner(f"Processing uploaded matrix: {uploaded_file.name}..."):
+                df = pd.read_csv(uploaded_file)
+            msg_id = uploaded_file.name.split('_msg_')[-1].replace('.csv', '') if '_msg_' in uploaded_file.name else "Uploaded CSV"
+        except Exception as e:
+            st.error(f"Failed to read file: {e}")
+            return
+    else:
+        # Option 2: Fallback to Local Directory Search if running locally
+        st.sidebar.markdown("---")
+        st.sidebar.caption("Or strictly select a local generated folder:")
         
-    target_folder = st.sidebar.selectbox("Select a Data Folder", csv_folders)
-    
-    # 2. Find available Msg IDs
-    folder_path = os.path.join(current_dir, target_folder)
-    csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv') and '_msg_' in f]
-    
-    if not csv_files:
-        st.sidebar.warning(f"No *_msg_*.csv files found inside {target_folder}.")
-        return
+        current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+        csv_folders = [d for d in os.listdir(current_dir) if os.path.isdir(os.path.join(current_dir, d)) and d.endswith('_csv')]
+        csv_folders.sort()
         
-    available_msgs = []
-    for f in csv_files:
-        msg_id_part = f.split('_msg_')[-1].replace('.csv', '')
-        available_msgs.append((msg_id_part, f))
-    available_msgs.sort()
-    
-    msg_dict = {m_id: f for m_id, f in available_msgs}
-    msg_id = st.sidebar.selectbox("Select a Message ID", list(msg_dict.keys()))
-    
-    target_file = os.path.join(folder_path, msg_dict[msg_id])
-    
-    # 3. Load File and List Columns
-    # Use st.cache_data so we don't physically reload the giant CSV every time the user checks a box!
-    @st.cache_data
-    def load_data(filepath):
-        return pd.read_csv(filepath)
+        if not csv_folders:
+            st.info("No local `_csv` folders detected. Please use the Drag & Drop File Uploader above!")
+            return
+            
+        target_folder = st.sidebar.selectbox("Select a Local Data Folder", csv_folders)
+        folder_path = os.path.join(current_dir, target_folder)
+        csv_files = [f for f in os.listdir(folder_path) if f.endswith('.csv') and '_msg_' in f]
         
-    try:
-        with st.spinner(f"Loading data matrix from {msg_dict[msg_id]}..."):
-            df = load_data(target_file)
-    except Exception as e:
-        st.error(f"Failed to load {target_file}: {e}")
-        return
+        if not csv_files:
+            st.sidebar.warning(f"No *_msg_*.csv files found inside {target_folder}.")
+            return
+            
+        available_msgs = []
+        for f in csv_files:
+            msg_id_part = f.split('_msg_')[-1].replace('.csv', '')
+            available_msgs.append((msg_id_part, f))
+        available_msgs.sort()
+        
+        msg_dict = {m_id: f for m_id, f in available_msgs}
+        msg_id = st.sidebar.selectbox("Select a Message ID", list(msg_dict.keys()))
+        
+        target_file = os.path.join(folder_path, msg_dict[msg_id])
+        
+        # Use st.cache_data so we don't physically reload the giant CSV every time the user checks a box!
+        @st.cache_data
+        def load_data(filepath):
+            return pd.read_csv(filepath)
+            
+        try:
+            with st.spinner(f"Loading data matrix from {msg_dict[msg_id]}..."):
+                df = load_data(target_file)
+        except Exception as e:
+            st.error(f"Failed to load {target_file}: {e}")
+            return
         
     cols = list(df.columns)
     
