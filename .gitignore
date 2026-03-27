@@ -1,0 +1,19 @@
+# Exclude massive PCAP and CSV generated datasets
+*_csv/
+*_seo_csv/
+*.csv
+*.pcap
+
+# Exclude generated Combined Excel files and Official ICD Sheets
+*.xlsx
+~$*.xlsx
+
+# Exclude Python cache and environment items
+__pycache__/
+.env
+.venv
+venv/
+*.pyc
+
+# Exclude OS system files
+.DS_Store
