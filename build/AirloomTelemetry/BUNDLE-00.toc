@@ -1,0 +1,3 @@
+([('AirloomTelemetry',
+   '/Users/mookwonseo/Desktop/Projects/DataAnalysis/HITL/dist/AirloomTelemetry',
+   'EXECUTABLE')],)
