@@ -45,4 +45,4 @@ conda activate airloomdata
 pip install -r requirements.txt
 ```
 
-*(If you are exclusively using the Windows `.exe` executable downloaded from GitHub Actions, absolutely zero dependencies or installations are physically required!)*
+*(Note: Only for the `.exe` or executable file, users can simply one-click the file, and it will be automatically installed and run the GUI program without requiring any Python dependencies!)*
