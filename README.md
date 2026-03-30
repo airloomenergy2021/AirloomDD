@@ -6,7 +6,7 @@ This repository contains the complete reverse-engineering and visualization suit
 The system dynamically decodes `.pcap` (and pre-parsed `.csv`) datalogger files using a flexible, dynamic Markdown-based dictionary system.
 **Source of Truth:** The `ICD_Formats/` folder contains exactly defined byte-sizes, formats, and structural arrays indicating exactly how the raw binary payloads are mapped out. If the message payload structure changes, you only need to update the `.md` file—no code changes required!
 
-## 🚀 The Three Tools
+## 🚀 The Two Tools
 
 ### 1. The Native Desktop Application (Recommended)
 This is the fastest, most powerful native tool designed to effortlessly securely ingest **500MB+** `.pcap` files directly from your hard drive, completely bypassing internet slow-down.
@@ -24,14 +24,7 @@ This is the fastest, most powerful native tool designed to effortlessly securely
 
 ---
 
-### 2. Streamlit Cloud Web Dashboard
-An internet-based visualization UI meant for universally securely sharing dashboards to your team via URLs. 
-*   **Run Locally:** `streamlit run streamlit_telemetry.py`
-*   *Note: Dropping massive 100MB+ datasets via browsers triggers severe internet upload bottlenecks and Cloud RAM constraints. For massive Datasets, strictly use the Native Desktop Application above!*
-
----
-
-### 3. Headless Python CLI (`plot_telemetry.py` & `csv_to_excel.py`)
+### 2. Headless Python CLI (`plot_telemetry.py` & `csv_to_excel.py`)
 Standard terminal interfaces designed to sequentially crunch previously extracted `_csv` datastructures for rapid headless engineering tasks.
 *   `python plot_telemetry.py` (For Matplotlib terminal dumps)
 *   `python csv_to_excel.py` (For headless Excel folder conversions)
