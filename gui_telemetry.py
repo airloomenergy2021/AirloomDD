@@ -54,10 +54,31 @@ class TelemetryGUI(tk.Tk):
         
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
+        # Traveler Selection
+        ttk.Label(control_frame, text="3. Traveler Filter (Optional)", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        
+        trv_frame = ttk.Frame(control_frame)
+        trv_frame.pack(fill=tk.X, pady=2)
+        
+        self.traveler_listbox = tk.Listbox(trv_frame, selectmode=tk.MULTIPLE, height=4, exportselection=0)
+        self.traveler_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Add scrollbar to traveler
+        trv_scroll = ttk.Scrollbar(trv_frame, orient=tk.VERTICAL)
+        trv_scroll.config(command=self.traveler_listbox.yview)
+        trv_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.traveler_listbox.config(yscrollcommand=trv_scroll.set)
+        
+        self.traveler_mode_combo = ttk.Combobox(control_frame, values=["Combine in Same Graph", "Separate Graphs"], state="readonly")
+        self.traveler_mode_combo.current(0)
+        self.traveler_mode_combo.pack(fill=tk.X, pady=2)
+        
+        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
         # Columns List Selection
-        ttk.Label(control_frame, text="3. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
-        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=10, exportselection=0)
-        self.cols_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        ttk.Label(control_frame, text="4. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=7, exportselection=0)
+        self.cols_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
         
         # Graphical Scrollbar Attachment
         scrollbar1 = ttk.Scrollbar(self.cols_listbox, orient=tk.VERTICAL)
@@ -71,9 +92,9 @@ class TelemetryGUI(tk.Tk):
         ttk.Button(btn_frame, text="➕ Add Plot", command=self.add_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         ttk.Button(btn_frame, text="➖ Remove Plot", command=self.remove_plot).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
         
-        ttk.Label(control_frame, text="4. Active Plots", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
-        self.active_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=8, exportselection=0)
-        self.active_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        ttk.Label(control_frame, text="5. Active Plots", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.active_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=5, exportselection=0)
+        self.active_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
         
         scrollbar2 = ttk.Scrollbar(self.active_listbox, orient=tk.VERTICAL)
         scrollbar2.config(command=self.active_listbox.yview)
@@ -86,7 +107,7 @@ class TelemetryGUI(tk.Tk):
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
         # Export Controls
-        ttk.Label(control_frame, text="5. Data Export", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        ttk.Label(control_frame, text="6. Data Export", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
         ttk.Button(control_frame, text="📊 Export Full Stack to Excel", command=self.export_excel).pack(fill=tk.X, pady=5)
         
     def export_excel(self):
@@ -212,6 +233,22 @@ class TelemetryGUI(tk.Tk):
         for col in self.current_df.columns:
             self.cols_listbox.insert(tk.END, col)
             
+        self.traveler_col_name = None
+        for c in self.current_df.columns:
+            if "traveler" in str(c).lower() and "num" in str(c).lower():
+                self.traveler_col_name = c
+                break
+                
+        self.traveler_listbox.config(state=tk.NORMAL)
+        self.traveler_listbox.delete(0, tk.END)
+        if self.traveler_col_name:
+            unique_trvs = sorted(self.current_df[self.traveler_col_name].dropna().unique())
+            for t in unique_trvs:
+                self.traveler_listbox.insert(tk.END, f"Traveler {int(t)}")
+        else:
+            self.traveler_listbox.insert(tk.END, "N/A (No Traveler Data)")
+            self.traveler_listbox.config(state=tk.DISABLED)
+            
         # Flush active plots when radically changing message structures
         self.active_listbox.delete(0, tk.END)
         if self.canvas:
@@ -263,30 +300,73 @@ class TelemetryGUI(tk.Tk):
         for widget in self.plot_frame.winfo_children():
             widget.destroy()
             
-        num_plots = len(cols_to_plot)
+        selected_trvs = []
+        if getattr(self, 'traveler_col_name', None) and str(self.traveler_listbox.cget("state")) == str(tk.NORMAL):
+            sel_idx = self.traveler_listbox.curselection()
+            if sel_idx:
+                unique_trvs = sorted(self.current_df[self.traveler_col_name].dropna().unique())
+                selected_trvs = [unique_trvs[i] for i in sel_idx]
+
+        mode = getattr(self, 'traveler_mode_combo', None)
+        mode_val = mode.get() if mode else ""
+        
+        plot_configs = [] 
+        
+        x_col = 'MSG CNT' if 'MSG CNT' in df.columns else df.index
+        x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
+        
+        if not selected_trvs:
+            for col in cols_to_plot:
+                plot_configs.append((col, col, [(df[x_col], df[col], col, 0)]))
+        else:
+            if "Combine" in mode_val:
+                for col in cols_to_plot:
+                    series = []
+                    for c_idx, t in enumerate(selected_trvs):
+                        t_df = df[df[self.traveler_col_name] == t]
+                        if len(t_df) > 0:
+                            series.append((t_df[x_col], t_df[col], f"Trv {int(t)}", c_idx))
+                    if series:
+                        plot_configs.append((f"{col} (Combined Travelers)", col, series))
+            else:
+                for col in cols_to_plot:
+                    for c_idx, t in enumerate(selected_trvs):
+                        t_df = df[df[self.traveler_col_name] == t]
+                        if len(t_df) > 0:
+                            series = [(t_df[x_col], t_df[col], f"Trv {int(t)}", c_idx)]
+                            plot_configs.append((f"{col} - Traveler {int(t)}", col, series))
+                            
+        num_plots = len(plot_configs)
+        if num_plots == 0:
+            return
+            
         self.figure, axes = plt.subplots(num_plots, 1, figsize=(10, 3 * num_plots), sharex=True)
         if num_plots == 1:
             axes = [axes]
             
-        x_axis = df['MSG CNT'] if 'MSG CNT' in df.columns else df.index
-        x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
-        
-        # Extremely powerful decimation function ensures ~10,000 points perfectly mirror 1,000,000 row datasets without any computer freezing.
-        step = max(1, len(df) // 10000)
-        
-        for i, col in enumerate(cols_to_plot):
+        for i, config in enumerate(plot_configs):
+            title, ylabel, series = config
             ax = axes[i]
-            ax.plot(x_axis[::step], df[col][::step], label=col, alpha=0.8, color=f'C{i}', linewidth=1.5)
-            ax.set_ylabel(col, fontsize=10, fontweight='bold')
-            ax.legend(loc='upper right')
+            
+            for (x_vals, y_vals, label, color_idx) in series:
+                step = max(1, len(x_vals) // 10000)
+                if step == 0:
+                    step = 1
+                try:
+                    ax.plot(x_vals[::step], y_vals[::step], label=label, alpha=0.8, color=f'C{color_idx}', linewidth=1.5)
+                except Exception:
+                    pass
+                
+            ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
+            ax.set_title(title, fontsize=10, pad=3)
+            ax.legend(loc='upper right', fontsize=8)
             ax.grid(True, linestyle="--", alpha=0.6)
             
-            # Cleanly slice out top and right axis bounds
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             
             if i == num_plots - 1:
-                ax.set_xlabel(x_label, fontsize=11, fontweight='bold')
+                ax.set_xlabel(x_label, fontsize=10, fontweight='bold')
                 
         self.figure.tight_layout()
         
