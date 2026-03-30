@@ -55,17 +55,32 @@ class TelemetryGUI(tk.Tk):
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
         # Columns List Selection
-        ttk.Label(control_frame, text="3. Structural Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
-        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.MULTIPLE, height=20, exportselection=0)
+        ttk.Label(control_frame, text="3. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=10, exportselection=0)
         self.cols_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Graphical Scrollbar Attachment
-        scrollbar = ttk.Scrollbar(self.cols_listbox, orient=tk.VERTICAL)
-        scrollbar.config(command=self.cols_listbox.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.cols_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar1 = ttk.Scrollbar(self.cols_listbox, orient=tk.VERTICAL)
+        scrollbar1.config(command=self.cols_listbox.yview)
+        scrollbar1.pack(side=tk.RIGHT, fill=tk.Y)
+        self.cols_listbox.config(yscrollcommand=scrollbar1.set)
         
-        ttk.Button(control_frame, text="🚀 Render Decimated Plot", command=self.plot_data).pack(fill=tk.X, pady=10)
+        # Dynamic Add/Remove Queue Controls
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(btn_frame, text="➕ Add Plot", command=self.add_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_frame, text="➖ Remove Plot", command=self.remove_plot).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+        
+        ttk.Label(control_frame, text="4. Active Plots", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.active_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=8, exportselection=0)
+        self.active_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        scrollbar2 = ttk.Scrollbar(self.active_listbox, orient=tk.VERTICAL)
+        scrollbar2.config(command=self.active_listbox.yview)
+        scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
+        self.active_listbox.config(yscrollcommand=scrollbar2.set)
+        
+        ttk.Button(control_frame, text="🚀 Manual Render Sequence", command=self.plot_data).pack(fill=tk.X, pady=10)
         
     def load_file(self):
         filepath = filedialog.askopenfilename(
@@ -94,9 +109,15 @@ class TelemetryGUI(tk.Tk):
             
     def process_pcap(self, filepath):
         try:
-            # Native path resolution to link back to the ICD Configurations
-            current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-            icd_md_dir = os.path.join(current_dir, "ICD_Formats")
+            # Native path resolution structurally compatible with PyInstaller standard compilations
+            if getattr(sys, 'frozen', False):
+                # We are running as a PyInstaller executable bundle. Access internal hidden payload:
+                base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            else:
+                # We are running conventionally via raw python
+                base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+                
+            icd_md_dir = os.path.join(base_dir, "ICD_Formats")
             
             from pcap_decoder import load_icd_config_from_md, build_format
             icd_config = load_icd_config_from_md(icd_md_dir)
@@ -160,16 +181,48 @@ class TelemetryGUI(tk.Tk):
         for col in self.current_df.columns:
             self.cols_listbox.insert(tk.END, col)
             
+        # Flush active plots when radically changing message structures
+        self.active_listbox.delete(0, tk.END)
+        if self.canvas:
+            self.canvas.get_tk_widget().destroy()
+            for widget in self.plot_frame.winfo_children(): widget.destroy()
+            self.canvas = None
+
+    def add_plot(self):
+        selected = self.cols_listbox.curselection()
+        if not selected: return
+        added = False
+        current_active = self.active_listbox.get(0, tk.END)
+        for i in selected:
+            col = self.cols_listbox.get(i)
+            if col not in current_active:
+                self.active_listbox.insert(tk.END, col)
+                added = True
+        self.cols_listbox.selection_clear(0, tk.END)
+        if added:
+            self.plot_data()
+
+    def remove_plot(self):
+        selected = self.active_listbox.curselection()
+        if not selected: return
+        for i in reversed(selected):
+            self.active_listbox.delete(i)
+            
+        if self.active_listbox.size() == 0 and self.canvas:
+            self.canvas.get_tk_widget().destroy()
+            for widget in self.plot_frame.winfo_children(): widget.destroy()
+            self.canvas = None
+        else:
+            self.plot_data()
+            
     def plot_data(self):
         if self.current_df is None:
             return
             
-        selected_indices = self.cols_listbox.curselection()
-        if not selected_indices:
-            messagebox.showinfo("Selection Overridden", "You must select at least one geometric column from the middle panel to plot.")
+        cols_to_plot = self.active_listbox.get(0, tk.END)
+        if len(cols_to_plot) == 0:
             return
             
-        cols_to_plot = [self.cols_listbox.get(i) for i in selected_indices]
         df = self.current_df
         
         if self.canvas:
