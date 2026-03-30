@@ -80,8 +80,39 @@ class TelemetryGUI(tk.Tk):
         scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
         self.active_listbox.config(yscrollcommand=scrollbar2.set)
         
-        ttk.Button(control_frame, text="🚀 Manual Render Sequence", command=self.plot_data).pack(fill=tk.X, pady=10)
+        # Action Buttons Area
+        ttk.Button(control_frame, text="🚀 Render Decimated Plot", command=self.plot_data).pack(fill=tk.X, pady=10)
         
+        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        
+        # Export Controls
+        ttk.Label(control_frame, text="5. Data Export", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        ttk.Button(control_frame, text="📊 Export Full Stack to Excel", command=self.export_excel).pack(fill=tk.X, pady=5)
+        
+    def export_excel(self):
+        if not self.all_dfs:
+            messagebox.showwarning("No Payload Detected", "Secure a .pcap or .csv payload array first before attempting an Excel extraction!")
+            return
+            
+        save_path = filedialog.asksaveasfilename(
+            title="Export Unified Telemetry Excel Dataset",
+            defaultextension=".xlsx",
+            filetypes=[("Excel Workspace", "*.xlsx")]
+        )
+        if not save_path:
+            return
+            
+        try:
+            # Excel compilation is mechanically limited, so cap arrays at 1,048,575 rows logically
+            with pd.ExcelWriter(save_path, engine='openpyxl') as writer:
+                for msg_id, df in self.all_dfs.items():
+                    safe_df = df.iloc[:1048575] if len(df) > 1048575 else df
+                    safe_df.to_excel(writer, sheet_name=str(msg_id)[:31], index=False)
+                    
+            messagebox.showinfo("Export Successful", f"Compilation Complete!\n\nMechanically folded {len(self.all_dfs)} message structs into:\n{os.path.basename(save_path)}")
+        except Exception as e:
+            messagebox.showerror("Catastrophic Write Fail", f"Microsoft Excel serialization sequence collapsed:\n{e}")
+
     def load_file(self):
         filepath = filedialog.askopenfilename(
             title="Locate Airloom Data Payload",
