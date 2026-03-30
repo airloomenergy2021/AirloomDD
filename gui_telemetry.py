@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import dpkt
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -91,8 +92,12 @@ class TelemetryGUI(tk.Tk):
         
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
-        # Action Button Area (Kept as manual refresh if needed)
-        ttk.Button(control_frame, text="🔄 Refresh Plot", command=self.plot_data).pack(fill=tk.X, pady=10)
+        # Action Button Area
+        btn_action_frame = ttk.Frame(control_frame)
+        btn_action_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(btn_action_frame, text="🚀 Plot", command=self.plot_data).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        ttk.Button(btn_action_frame, text="🧹 Clear", command=self.clear_selection).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
         
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
@@ -248,6 +253,24 @@ class TelemetryGUI(tk.Tk):
             self.canvas = None
             if self.figure: plt.close(self.figure)
 
+    def clear_selection(self):
+        """Reset column selections, message ID, and flush the plot area"""
+        print("[*] Performing full UI reset...")
+        self.msg_combo.set("")
+        self.cols_listbox.delete(0, tk.END)
+        self.traveler_listbox.delete(0, tk.END)
+        self.current_df = None
+        
+        if self.canvas:
+            self.canvas.get_tk_widget().destroy()
+            self.canvas = None
+            
+        if self.figure:
+            plt.close(self.figure)
+            
+        for widget in self.plot_frame.winfo_children():
+            widget.destroy()
+
     def plot_data(self):
         if self.current_df is None:
             return
@@ -256,13 +279,12 @@ class TelemetryGUI(tk.Tk):
         cols_to_plot = [self.cols_listbox.get(i) for i in sel_indices]
         
         if not cols_to_plot:
+            print("[!] No columns selected. Skipping plot.")
             if self.canvas:
                 self.canvas.get_tk_widget().destroy()
                 for widget in self.plot_frame.winfo_children(): widget.destroy()
                 self.canvas = None
             return
-            
-        print(f"[*] Plotting sequence triggered: {len(cols_to_plot)} columns...")
             
         df = self.current_df
         
@@ -272,7 +294,8 @@ class TelemetryGUI(tk.Tk):
             self.canvas = None
         
         if self.figure:
-            plt.close(self.figure)
+            plt.close(self.figure) # Close the global figure if any
+            self.figure = None
             
         for widget in self.plot_frame.winfo_children():
             widget.destroy()
@@ -292,43 +315,50 @@ class TelemetryGUI(tk.Tk):
         x_col = 'MSG CNT' if 'MSG CNT' in df.columns else df.index
         x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
         
+        print(f"[*] Plotting {len(cols_to_plot)} columns across {len(selected_trvs) or 1} traveler selections...")
+        
         if not selected_trvs:
             for col in cols_to_plot:
-                plot_configs.append((col, col, [(df[x_col], df[col], col, 0)]))
+                x_vals = df[x_col] if isinstance(x_col, str) else df.index
+                plot_configs.append((col, col, [(x_vals, df[col], col, 0)]))
         else:
             if "Combine" in mode_val:
                 for col in cols_to_plot:
                     series = []
                     for c_idx, t in enumerate(selected_trvs):
-                        t_df = df[df[self.traveler_col_name] == t]
+                        # Use a more flexible comparison for traveler IDs
+                        t_df = df[np.isclose(df[self.traveler_col_name].astype(float), float(t))]
                         if len(t_df) > 0:
-                            series.append((t_df[x_col], t_df[col], f"Trv {int(t)}", c_idx))
+                            x_vals = t_df[x_col] if isinstance(x_col, str) else t_df.index
+                            series.append((x_vals, t_df[col], f"Trv {int(float(t))}", c_idx))
                     if series:
                         plot_configs.append((f"{col} (Combined Travelers)", col, series))
             else:
                 for col in cols_to_plot:
                     for c_idx, t in enumerate(selected_trvs):
-                        t_df = df[df[self.traveler_col_name] == t]
+                        t_df = df[np.isclose(df[self.traveler_col_name].astype(float), float(t))]
                         if len(t_df) > 0:
-                            series = [(t_df[x_col], t_df[col], f"Trv {int(t)}", c_idx)]
-                            plot_configs.append((f"{col} - Traveler {int(t)}", col, series))
+                            x_vals = t_df[x_col] if isinstance(x_col, str) else t_df.index
+                            series = [(x_vals, t_df[col], f"Trv {int(float(t))}", c_idx)]
+                            plot_configs.append((f"{col} - Traveler {int(float(t))}", col, series))
                             
         num_plots = len(plot_configs)
+        print(f"[*] Total subplots prepared: {num_plots}")
+        
         if num_plots == 0:
+            messagebox.showwarning("Empty Filter", "No legitimate telemetry data found for the selected Traveler/Column combination.")
             return
             
-        self.figure, axes = plt.subplots(num_plots, 1, figsize=(10, 3 * num_plots), sharex=True)
-        if num_plots == 1:
-            axes = [axes]
-            
+        # Using the Object-Oriented Figure API for cleaner, thread-safe rendering on Mac
+        self.figure = Figure(figsize=(10, 3 * num_plots), dpi=100)
+        self.figure.patch.set_facecolor('#f0f0f0') # Maintain UI theme
+        
         for i, config in enumerate(plot_configs):
             title, ylabel, series = config
-            ax = axes[i]
+            ax = self.figure.add_subplot(num_plots, 1, i + 1)
             
             for (x_vals, y_vals, label, color_idx) in series:
                 step = max(1, len(x_vals) // 10000)
-                if step == 0:
-                    step = 1
                 try:
                     ax.plot(x_vals[::step], y_vals[::step], label=label, alpha=0.8, color=f'C{color_idx}', linewidth=1.5)
                 except Exception:
@@ -350,12 +380,15 @@ class TelemetryGUI(tk.Tk):
         # Integrate into the Tkinter window natively
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.plot_frame)
         self.canvas.draw()
+        
+        # Use simple pack layout without redundant calls
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         
         # Inject standard zooming/panning toolbar provided by matplotlib
         toolbar = NavigationToolbar2Tk(self.canvas, self.plot_frame)
         toolbar.update()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        print("[*] Plot successfully rendered to canvas.")
 
 if __name__ == "__main__":
     app = TelemetryGUI()
