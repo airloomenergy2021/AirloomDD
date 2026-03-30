@@ -77,8 +77,11 @@ class TelemetryGUI(tk.Tk):
 
         # Columns List Selection
         ttk.Label(control_frame, text="4. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
-        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=7, exportselection=0)
+        self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=15, exportselection=0)
         self.cols_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
+        
+        # Binding selection to auto-plot
+        self.cols_listbox.bind("<<ListboxSelect>>", lambda e: self.plot_data())
         
         # Graphical Scrollbar Attachment
         scrollbar1 = ttk.Scrollbar(self.cols_listbox, orient=tk.VERTICAL)
@@ -86,23 +89,10 @@ class TelemetryGUI(tk.Tk):
         scrollbar1.pack(side=tk.RIGHT, fill=tk.Y)
         self.cols_listbox.config(yscrollcommand=scrollbar1.set)
         
-        # Dynamic Add/Remove Queue Controls
-        btn_frame = ttk.Frame(control_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="➕ Add Plot", command=self.add_plot).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-        ttk.Button(btn_frame, text="➖ Remove Plot", command=self.remove_plot).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=2)
+        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
-        ttk.Label(control_frame, text="5. Active Plots", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
-        self.active_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=5, exportselection=0)
-        self.active_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
-        
-        scrollbar2 = ttk.Scrollbar(self.active_listbox, orient=tk.VERTICAL)
-        scrollbar2.config(command=self.active_listbox.yview)
-        scrollbar2.pack(side=tk.RIGHT, fill=tk.Y)
-        self.active_listbox.config(yscrollcommand=scrollbar2.set)
-        
-        # Action Buttons Area
-        ttk.Button(control_frame, text="🚀 Render Decimated Plot", command=self.plot_data).pack(fill=tk.X, pady=10)
+        # Action Button Area (Kept as manual refresh if needed)
+        ttk.Button(control_frame, text="🔄 Refresh Plot", command=self.plot_data).pack(fill=tk.X, pady=10)
         
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
@@ -228,6 +218,8 @@ class TelemetryGUI(tk.Tk):
         msg_id = self.msg_combo.get()
         self.current_df = self.all_dfs[msg_id]
         
+        print(f"[*] Message {msg_id} selected. Updating column list...")
+        
         # Dynamically inject the listbox based on DataFrame dimensions
         self.cols_listbox.delete(0, tk.END)
         for col in self.current_df.columns:
@@ -249,54 +241,39 @@ class TelemetryGUI(tk.Tk):
             self.traveler_listbox.insert(tk.END, "N/A (No Traveler Data)")
             self.traveler_listbox.config(state=tk.DISABLED)
             
-        # Flush active plots when radically changing message structures
-        self.active_listbox.delete(0, tk.END)
+        # In the new simplified UI, clearing columns clears the plot
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
             for widget in self.plot_frame.winfo_children(): widget.destroy()
             self.canvas = None
+            if self.figure: plt.close(self.figure)
 
-    def add_plot(self):
-        selected = self.cols_listbox.curselection()
-        if not selected: return
-        added = False
-        current_active = self.active_listbox.get(0, tk.END)
-        for i in selected:
-            col = self.cols_listbox.get(i)
-            if col not in current_active:
-                self.active_listbox.insert(tk.END, col)
-                added = True
-        self.cols_listbox.selection_clear(0, tk.END)
-        if added:
-            self.plot_data()
-
-    def remove_plot(self):
-        selected = self.active_listbox.curselection()
-        if not selected: return
-        for i in reversed(selected):
-            self.active_listbox.delete(i)
-            
-        if self.active_listbox.size() == 0 and self.canvas:
-            self.canvas.get_tk_widget().destroy()
-            for widget in self.plot_frame.winfo_children(): widget.destroy()
-            self.canvas = None
-        else:
-            self.plot_data()
-            
     def plot_data(self):
         if self.current_df is None:
             return
             
-        cols_to_plot = self.active_listbox.get(0, tk.END)
-        if len(cols_to_plot) == 0:
+        sel_indices = self.cols_listbox.curselection()
+        cols_to_plot = [self.cols_listbox.get(i) for i in sel_indices]
+        
+        if not cols_to_plot:
+            if self.canvas:
+                self.canvas.get_tk_widget().destroy()
+                for widget in self.plot_frame.winfo_children(): widget.destroy()
+                self.canvas = None
             return
+            
+        print(f"[*] Plotting sequence triggered: {len(cols_to_plot)} columns...")
             
         df = self.current_df
         
+        # Natively destroy internal matplotlib rendering widgets to avoid memory leaks
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
+            self.canvas = None
+        
+        if self.figure:
+            plt.close(self.figure)
             
-        # Natively destroy internal matplotlib rendering widgets to avoid memory leaks
         for widget in self.plot_frame.winfo_children():
             widget.destroy()
             
