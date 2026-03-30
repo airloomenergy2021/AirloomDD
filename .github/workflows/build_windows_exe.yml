@@ -24,10 +24,14 @@ jobs:
         
     - name: Build Executable with PyInstaller
       run: |
-        pyinstaller --onefile --windowed --add-data "ICD_Formats;ICD_Formats" --name "AirloomTelemetry" gui_telemetry.py
+        pyinstaller AirloomTelemetry.spec --noconfirm
+        
+    - name: Zip Windows Application Folder
+      run: |
+        powershell Compress-Archive -Path dist/AirloomTelemetry -DestinationPath dist/AirloomTelemetry-Windows-Fast-Launch.zip
         
     - name: Upload Windows Executable
       uses: actions/upload-artifact@v4
       with:
-        name: AirloomTelemetry-Windows-Executable
-        path: dist/AirloomTelemetry.exe
+        name: AirloomTelemetry-Windows-Standalone
+        path: dist/AirloomTelemetry-Windows-Fast-Launch.zip

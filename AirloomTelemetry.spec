@@ -43,9 +43,10 @@ coll = COLLECT(
     upx_exclude=[],
     name='AirloomTelemetry',
 )
-app = BUNDLE(
-    coll,
-    name='AirloomTelemetry.app',
-    icon=None,
-    bundle_identifier='com.airloom.telemetry',
-)
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='AirloomTelemetry.app',
+        icon=None,
+        bundle_identifier='com.airloom.telemetry',
+    )
