@@ -9,6 +9,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import matplotlib.dates as mdates
 
 # Import the decoder logic directly from the module
 try:
@@ -70,14 +71,30 @@ class TelemetryGUI(tk.Tk):
         trv_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.traveler_listbox.config(yscrollcommand=trv_scroll.set)
         
-        self.traveler_mode_combo = ttk.Combobox(control_frame, values=["Combine in Same Graph", "Separate Graphs"], state="readonly")
-        self.traveler_mode_combo.current(0)
-        self.traveler_mode_combo.pack(fill=tk.X, pady=2)
-        
+        # X-Axis selection
+        ttk.Label(control_frame, text="4. X-Axis Selection", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.xaxis_combo = ttk.Combobox(control_frame, values=["Row Index", "MSG CNT"], state="readonly")
+        self.xaxis_combo.current(0)
+        self.xaxis_combo.pack(fill=tk.X, pady=2)
+        self.xaxis_combo.bind("<<ComboboxSelected>>", lambda e: self.plot_data())
+
+        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
+        # Plot Mode
+        ttk.Label(control_frame, text="5. Plot Mode", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.plot_mode_combo = ttk.Combobox(control_frame, values=[
+            "Separate Subplots", 
+            "Combine Travelers (Per Col)", 
+            "Combine Everything"
+        ], state="readonly")
+        self.plot_mode_combo.current(0)
+        self.plot_mode_combo.pack(fill=tk.X, pady=2)
+        self.plot_mode_combo.bind("<<ComboboxSelected>>", lambda e: self.plot_data())
+
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
         # Columns List Selection
-        ttk.Label(control_frame, text="4. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        ttk.Label(control_frame, text="6. Available Columns", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
         self.cols_listbox = tk.Listbox(control_frame, selectmode=tk.EXTENDED, height=15, exportselection=0)
         self.cols_listbox.pack(fill=tk.BOTH, expand=True, pady=2)
         
@@ -102,7 +119,7 @@ class TelemetryGUI(tk.Tk):
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
         # Export Controls
-        ttk.Label(control_frame, text="6. Data Export", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        ttk.Label(control_frame, text="7. Data Export", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
         ttk.Button(control_frame, text="📊 Export Full Stack to Excel", command=self.export_excel).pack(fill=tk.X, pady=5)
         
     def export_excel(self):
@@ -246,6 +263,27 @@ class TelemetryGUI(tk.Tk):
             self.traveler_listbox.insert(tk.END, "N/A (No Traveler Data)")
             self.traveler_listbox.config(state=tk.DISABLED)
             
+        # Update X-axis options
+        x_options = ["Row Index"]
+        if "MSG CNT" in self.current_df.columns:
+            x_options.append("MSG CNT")
+        
+        # Check for Date Time options
+        self.date_col_name = None
+        for c in self.current_df.columns:
+            if "date" in str(c).lower() and "time" in str(c).lower():
+                self.date_col_name = c
+                x_options.append("Date Time")
+                break
+        
+        self.xaxis_combo.config(values=x_options)
+        if "Date Time" in x_options and self.xaxis_combo.get() == "Date Time":
+            pass # Keep as is
+        elif "MSG CNT" in x_options and (self.xaxis_combo.get() == "MSG CNT" or self.xaxis_combo.get() == ""):
+            self.xaxis_combo.set("MSG CNT")
+        else:
+            self.xaxis_combo.set("Row Index")
+
         # In the new simplified UI, clearing columns clears the plot
         if self.canvas:
             self.canvas.get_tk_widget().destroy()
@@ -307,40 +345,75 @@ class TelemetryGUI(tk.Tk):
                 unique_trvs = sorted(self.current_df[self.traveler_col_name].dropna().unique())
                 selected_trvs = [unique_trvs[i] for i in sel_idx]
 
-        mode = getattr(self, 'traveler_mode_combo', None)
-        mode_val = mode.get() if mode else ""
+        plot_mode = self.plot_mode_combo.get()
+        xaxis_mode = self.xaxis_combo.get()
+        
+        x_label = xaxis_mode
+        if xaxis_mode == "Date Time" and getattr(self, 'date_col_name', None):
+            x_col = self.date_col_name
+            # Ensure proper datetime conversion
+            if not pd.api.types.is_datetime64_any_dtype(df[x_col]):
+                try:
+                    df[x_col] = pd.to_datetime(df[x_col], errors='coerce')
+                except: pass
+        elif xaxis_mode == "MSG CNT" and "MSG CNT" in df.columns:
+            x_col = "MSG CNT"
+        else:
+            x_col = None # Use index
+            x_label = "Row Index"
         
         plot_configs = [] 
         
-        x_col = 'MSG CNT' if 'MSG CNT' in df.columns else df.index
-        x_label = "MSG CNT" if 'MSG CNT' in df.columns else "Sequence Index"
-        
         print(f"[*] Plotting {len(cols_to_plot)} columns across {len(selected_trvs) or 1} traveler selections...")
         
+        # Grouping logic for subplots
         if not selected_trvs:
-            for col in cols_to_plot:
-                x_vals = df[x_col] if isinstance(x_col, str) else df.index
-                plot_configs.append((col, col, [(x_vals, df[col], col, 0)]))
+            if "Combine Everything" in plot_mode:
+                series = []
+                for i, col in enumerate(cols_to_plot):
+                    x_vals = df[x_col] if x_col else df.index
+                    series.append((x_vals, df[col], col, i))
+                plot_configs.append(("Combined Plot", "Values", series))
+            else:
+                for i, col in enumerate(cols_to_plot):
+                    x_vals = df[x_col] if x_col else df.index
+                    series = [(x_vals, df[col], col, i)]
+                    plot_configs.append((col, col, series))
         else:
-            if "Combine" in mode_val:
+            if "Combine Everything" in plot_mode:
+                series = []
+                color_idx = 0
                 for col in cols_to_plot:
-                    series = []
-                    for c_idx, t in enumerate(selected_trvs):
-                        # Use a more flexible comparison for traveler IDs
+                    for t in selected_trvs:
                         t_df = df[np.isclose(df[self.traveler_col_name].astype(float), float(t))]
                         if len(t_df) > 0:
-                            x_vals = t_df[x_col] if isinstance(x_col, str) else t_df.index
+                            x_vals = t_df[x_col] if x_col else t_df.index
+                            series.append((x_vals, t_df[col], f"[Trv {int(float(t))}] {col}", color_idx))
+                            color_idx += 1
+                if series:
+                    plot_configs.append(("Combined Plot", "Values", series))
+            
+            elif "Combine Travelers" in plot_mode:
+                for i, col in enumerate(cols_to_plot):
+                    series = []
+                    for c_idx, t in enumerate(selected_trvs):
+                        t_df = df[np.isclose(df[self.traveler_col_name].astype(float), float(t))]
+                        if len(t_df) > 0:
+                            x_vals = t_df[x_col] if x_col else t_df.index
                             series.append((x_vals, t_df[col], f"Trv {int(float(t))}", c_idx))
                     if series:
                         plot_configs.append((f"{col} (Combined Travelers)", col, series))
             else:
+                # Separate Subplots
+                color_idx = 0
                 for col in cols_to_plot:
-                    for c_idx, t in enumerate(selected_trvs):
+                    for t in selected_trvs:
                         t_df = df[np.isclose(df[self.traveler_col_name].astype(float), float(t))]
                         if len(t_df) > 0:
-                            x_vals = t_df[x_col] if isinstance(x_col, str) else t_df.index
-                            series = [(x_vals, t_df[col], f"Trv {int(float(t))}", c_idx)]
+                            x_vals = t_df[x_col] if x_col else t_df.index
+                            series = [(x_vals, t_df[col], f"Trv {int(float(t))}", color_idx)]
                             plot_configs.append((f"{col} - Traveler {int(float(t))}", col, series))
+                            color_idx += 1
                             
         num_plots = len(plot_configs)
         print(f"[*] Total subplots prepared: {num_plots}")
@@ -374,6 +447,10 @@ class TelemetryGUI(tk.Tk):
             
             if i == num_plots - 1:
                 ax.set_xlabel(x_label, fontsize=10, fontweight='bold')
+            
+            if xaxis_mode == "Date Time":
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                self.figure.autofmt_xdate()
                 
         self.figure.tight_layout()
         
