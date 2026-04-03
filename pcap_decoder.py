@@ -22,9 +22,13 @@ def get_format_char(type_str):
 def build_format(_fields):
     fmt = "<" # Airloom internal logger byte order
     names = []
+    units = []
     
     for f in _fields:
         t = str(f['type']).lower()
+        u = str(f.get('unit', ''))
+        if u == 'nan': u = ''
+        
         if '[' in t:
             base = t.split('[')[0]
             count = int(t.split('[')[1].split(']')[0])
@@ -32,9 +36,11 @@ def build_format(_fields):
             fmt += str(count) + char
             if char == 's':
                 names.append(f['name'])
+                units.append(u)
             else:
                 for i in range(count):
                     names.append(f"{f['name']}[{i}]")
+                    units.append(u)
         else:
             char = get_format_char(t)
             expected_bytes = struct.calcsize("<" + char)
@@ -49,16 +55,19 @@ def build_format(_fields):
                 fmt += str(count) + char
                 if char == 's':
                     names.append(f['name'])
+                    units.append(u)
                 else:
                     for i in range(count):
                         names.append(f"{f['name']}[{i}]")
+                        units.append(u)
             else:
                 if char == 's' and actual_bytes > 0:
                     fmt += str(actual_bytes) + 's'
                 else:
                     fmt += char
                 names.append(f['name'])
-    return fmt, names
+                units.append(u)
+    return fmt, names, units
 
 def verify_csvs(decoded_dir, ref_dir):
     print(f"\n--- Verification Stage ---")
@@ -121,11 +130,17 @@ def load_icd_config_from_md(md_dir):
                 lines = f.readlines()
                 
             fields = []
+            unit_col_idx = -1
             parsing_table = False
             for line in lines:
                 line = line.strip()
-                if line.startswith('| Field') or line.startswith('| Field Name'):
+                if line.startswith('| Field Name') or line.startswith('| Field'):
                     parsing_table = True
+                    parts = [p.strip().lower() for p in line.split('|')[1:-1]]
+                    for i, p in enumerate(parts):
+                        if 'unit' in p:
+                            unit_col_idx = i
+                            break
                     continue
                 if line.startswith('|---'):
                     continue
@@ -133,7 +148,8 @@ def load_icd_config_from_md(md_dir):
                     parts = [p.strip() for p in line.split('|')[1:-1]]
                     if len(parts) >= 3:
                         name, dtype, num_bytes = parts[0], parts[1], parts[2]
-                        fields.append({'name': name, 'type': dtype, 'bytes': num_bytes})
+                        unit = parts[unit_col_idx] if unit_col_idx != -1 and len(parts) > unit_col_idx else ""
+                        fields.append({'name': name, 'type': dtype, 'bytes': num_bytes, 'unit': unit})
             
             if fields:
                 icd_config[msg_id] = fields
@@ -154,8 +170,8 @@ def decode_pcap(pcap_path, icd_md_dir, verify_dir=None):
     for sheet, fields in icd_config.items():
         try:
             msg_id = int(sheet.replace('B', ''))
-            fmt, names = build_format(fields)
-            formats[msg_id] = {'fmt': fmt, 'names': names, 'size': struct.calcsize(fmt)}
+            fmt, names, units = build_format(fields)
+            formats[msg_id] = {'fmt': fmt, 'names': names, 'units': units, 'size': struct.calcsize(fmt)}
         except: pass
 
     records = {msg_id: [] for msg_id in formats.keys()}

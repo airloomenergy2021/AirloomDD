@@ -24,7 +24,9 @@ class TelemetryGUI(tk.Tk):
         self.geometry("1400x800")
         
         self.all_dfs = {}
+        self.all_units = {} # New: store units map for each msg_id
         self.current_df = None
+        self.current_units = {} # New: units for selected message
         self.figure = None
         self.canvas = None
         
@@ -107,6 +109,13 @@ class TelemetryGUI(tk.Tk):
         scrollbar1.pack(side=tk.RIGHT, fill=tk.Y)
         self.cols_listbox.config(yscrollcommand=scrollbar1.set)
         
+        # Plot Style
+        ttk.Label(control_frame, text="8. Plot Style", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=5)
+        self.linestyle_combo = ttk.Combobox(control_frame, values=["Line Plot", "Scatter Plot"], state="readonly")
+        self.linestyle_combo.current(0)
+        self.linestyle_combo.pack(fill=tk.X, pady=2)
+        self.linestyle_combo.bind("<<ComboboxSelected>>", lambda e: self.plot_data())
+
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
         # Action Button Area
@@ -166,7 +175,27 @@ class TelemetryGUI(tk.Tk):
         try:
             df = pd.read_csv(filepath)
             msg_id = os.path.basename(filepath).split('_msg_')[-1].replace('.csv', '') if '_msg_' in filepath else "CSV"
+            
+            # Attemp to load units if we can resolve the msg_id
             self.all_dfs = {msg_id: df}
+            self.all_units = {}
+            
+            # Resolve ICD MD directory
+            if getattr(sys, 'frozen', False):
+                base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+            icd_md_dir = os.path.join(base_dir, "ICD_Formats")
+            
+            from pcap_decoder import load_icd_config_from_md, build_format
+            icd_config = load_icd_config_from_md(icd_md_dir)
+            
+            if msg_id in icd_config:
+                fields = icd_config[msg_id]
+                _, names, units = build_format(fields)
+                # Store units as a list to allow index-based matching
+                self.all_units[msg_id] = units
+            
             self.update_msg_dropdown()
         except Exception as e:
             messagebox.showerror("Catastrophic Read Fail", f"Failed to mount CSV:\n{e}")
@@ -193,8 +222,8 @@ class TelemetryGUI(tk.Tk):
             for sheet, fields in icd_config.items():
                 try:
                     m_id = int(sheet.replace('B', ''))
-                    fmt, names = build_format(fields)
-                    formats[m_id] = {'fmt': fmt, 'names': names, 'size': struct.calcsize(fmt)}
+                    fmt, names, units = build_format(fields)
+                    formats[m_id] = {'fmt': fmt, 'names': names, 'units': units, 'size': struct.calcsize(fmt)}
                 except Exception: pass
                 
             records = {m_id: [] for m_id in formats.keys()}
@@ -215,9 +244,13 @@ class TelemetryGUI(tk.Tk):
                         except: pass
                         
             self.all_dfs = {}
+            self.all_units = {}
             for m_id, data in records.items():
                 if data: 
-                    self.all_dfs[str(m_id)] = pd.DataFrame(data, columns=formats[m_id]['names'])
+                    msg_str = str(m_id)
+                    self.all_dfs[msg_str] = pd.DataFrame(data, columns=formats[m_id]['names'])
+                    # Store units as a list to allow index-based matching in the GUI
+                    self.all_units[msg_str] = formats[m_id]['units']
                     
             if not self.all_dfs:
                 messagebox.showwarning("Empty Stream", "No legitimate telemetry signatures detected in this PCAP container.")
@@ -232,15 +265,25 @@ class TelemetryGUI(tk.Tk):
     def update_msg_dropdown(self):
         msg_ids = list(self.all_dfs.keys())
         msg_ids.sort()
-        self.msg_combo.config(values=msg_ids, state="readonly")
-        self.msg_combo.current(0)
-        self.on_msg_select(None)
-        
+        if msg_ids:
+            self.msg_combo.config(values=msg_ids, state="readonly")
+            self.msg_combo.current(0)
+            self.on_msg_select(None)
+            
     def on_msg_select(self, event):
         msg_id = self.msg_combo.get()
         self.current_df = self.all_dfs[msg_id]
         
-        print(f"[*] Message {msg_id} selected. Updating column list...")
+        # Build unit mapping by column index (assumes MD file and CSV column order match)
+        units_list = self.all_units.get(msg_id, [])
+        self.current_units = {}
+        if units_list:
+            # Map units to columns by position
+            for i, col in enumerate(self.current_df.columns):
+                if i < len(units_list):
+                    self.current_units[col] = units_list[i]
+        
+        print(f"[*] Message {msg_id} selected. Mapping units by column index...")
         
         # Dynamically inject the listbox based on DataFrame dimensions
         self.cols_listbox.delete(0, tk.END)
@@ -430,14 +473,54 @@ class TelemetryGUI(tk.Tk):
             title, ylabel, series = config
             ax = self.figure.add_subplot(num_plots, 1, i + 1)
             
+            plot_type = self.linestyle_combo.get()
+
             for (x_vals, y_vals, label, color_idx) in series:
                 step = max(1, len(x_vals) // 10000)
                 try:
-                    ax.plot(x_vals[::step], y_vals[::step], label=label, alpha=0.8, color=f'C{color_idx}', linewidth=1.5)
+                    if plot_type == "Scatter Plot":
+                        ax.plot(x_vals[::step], y_vals[::step], 'o', label=label, alpha=0.6, color=f'C{color_idx}', markersize=1)
+                    else:
+                        ax.plot(x_vals[::step], y_vals[::step], label=label, alpha=0.8, color=f'C{color_idx}', linewidth=1.5, linestyle="-")
                 except Exception:
                     pass
                 
-            ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
+            y_unit = self.current_units.get(ylabel, "")
+            
+            # Fuzzy match fallback if exact match fails
+            if not y_unit:
+                norm_ylabel = self._normalize_name(ylabel)
+                for norm_name, unit in self.norm_units.items():
+                    if norm_ylabel in norm_name or norm_name in norm_ylabel:
+                        y_unit = unit
+                        break
+
+            # Special case: If ylabel is "Values" (Combined Plot), try to extract a common unit
+            if ylabel == "Values" and series:
+                found_units = set()
+                for s in series:
+                    s_label = s[2]
+                    base_name = s_label.split('] ')[-1] if '] ' in s_label else s_label
+                    # Try exact then normalized
+                    u = self.current_units.get(base_name, "")
+                    if not u:
+                        norm_base = self._normalize_name(base_name)
+                        for norm_name, unit in self.norm_units.items():
+                            if norm_base in norm_name or norm_name in norm_base:
+                                u = unit
+                                break
+                    if u: found_units.add(u)
+                
+                if len(found_units) == 1:
+                    y_unit = list(found_units)[0]
+                elif len(found_units) > 1:
+                    y_unit = "Mixed"
+
+            y_label_with_unit = ylabel
+            if y_unit:
+                y_label_with_unit = f"{ylabel} [{y_unit}]"
+                
+            ax.set_ylabel(y_label_with_unit, fontsize=9, fontweight='bold')
             ax.set_title(title, fontsize=10, pad=3)
             ax.legend(loc='upper right', fontsize=8)
             ax.grid(True, linestyle="--", alpha=0.6)
